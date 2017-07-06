@@ -11,9 +11,9 @@ Create an HDF5 file of images for training a feedforward style transfer model.
 """
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--train_dir', default='data/coco/images/train2014')
-parser.add_argument('--val_dir', default='data/coco/images/val2014')
-parser.add_argument('--output_file', default='data/ms-coco-256.h5')
+parser.add_argument('--train_dir', default='/home/saxiao/data/train')
+parser.add_argument('--val_dir', default='/home/saxiao/data/validate')
+parser.add_argument('--output_file', default='/home/saxiao/percept-loss/fast-neural-style/data/toy.h5')
 parser.add_argument('--height', type=int, default=256)
 parser.add_argument('--width', type=int, default=256)
 parser.add_argument('--max_images', type=int, default=-1)
@@ -22,20 +22,28 @@ parser.add_argument('--include_val', type=int, default=1)
 parser.add_argument('--max_resize', default=16, type=int)
 args = parser.parse_args()
 
-
-def add_data(h5_file, image_dir, prefix, args):
+def get_image_list(image_dir):
   # Make a list of all images in the source directory
   image_list = []
+  image_list_mask = []
   image_extensions = {'.jpg', '.jpeg', '.JPG', '.JPEG', '.png', '.PNG'}
   for filename in os.listdir(image_dir):
     ext = os.path.splitext(filename)[1]
-    if ext in image_extensions:
+    if ext in image_extensions and 'mask' not in filename:
       image_list.append(os.path.join(image_dir, filename))
+      image_list_mask.append(os.path.join(image_dir, filename[:-len(ext)]+'_mask'+ext))
+  print len(image_list)
+  print len(image_list_mask)
+  return image_list, image_list_mask
+
+def add_data(h5_file, image_list, prefix, args):
   num_images = len(image_list)
 
   # Resize all images and copy them into the hdf5 file
   # We'll bravely try multithreading
-  dset_name = os.path.join(prefix, 'images')
+  dset_name = prefix
+  #if isY: dset_name = os.path.join(prefix, 'y')
+  #dset_name = os.path.join(prefix, 'images')
   dset_size = (num_images, 3, args.height, args.width)
   imgs_dset = h5_file.create_dataset(dset_name, dset_size, np.uint8)
   
@@ -103,8 +111,14 @@ def add_data(h5_file, image_dir, prefix, args):
 if __name__ == '__main__':
   
   with h5py.File(args.output_file, 'w') as f:
-    add_data(f, args.train_dir, 'train2014', args)
+    image_list, image_list_mask = get_image_list(args.train_dir)
+    print image_list
+    print image_list_mask
+    add_data(f, image_list, 'train', args)
+    add_data(f, image_list_mask, 'train-y', args)
 
     if args.include_val != 0:
-      add_data(f, args.val_dir, 'val2014', args)
+      image_list, image_list_mask = get_image_list(args.val_dir)
+      add_data(f, image_list, 'val', args)
+      add_data(f, image_list_mask, 'val-y', args) 
 

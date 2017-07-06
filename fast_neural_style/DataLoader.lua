@@ -23,8 +23,8 @@ function DataLoader:__init(opt)
   }
   
   self.image_paths = {
-    train = '/train2014/images',
-    val = '/val2014/images',
+    train = '/train',
+    val = '/val',
   }
 
   if opt.task == 'upsample' then
@@ -49,8 +49,8 @@ function DataLoader:__init(opt)
     self.num_minibatches[k] = math.floor(v / self.batch_size)
   end
 
-  if opt.task == 'upsample' then
-    local size = self.h5_file:read('/train/y'):dataspaceSize()
+  if opt.task == 'transform' then
+    local size = self.h5_file:read('/train-y'):dataspaceSize()
     self.y_height = size[3]
     self.y_width = size[4]
   end
@@ -91,9 +91,9 @@ function DataLoader:getBatch(split)
   -- Preprocess images
   images_pre = self.preprocess_fn(images)
 
-  if self.task == 'upsample' then
+  if self.task == 'transform' then
     -- Also read high-res images out of the HDF5 file
-    local y_path = string.format('/%s/y', split)
+    local y_path = string.format('/%s-y', split)
     local y_images = self.h5_file:read(y_path):partial(
                         {start_idx, end_idx},
                         {1, self.num_channels},

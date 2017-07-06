@@ -15,9 +15,9 @@ Perform optimization-based style transfer as described in
 local cmd = torch.CmdLine()
 
 -- Basic options
-cmd:option('-content_image', 'images/content/chicago.jpg')
-cmd:option('-style_image', 'images/styles/starry_night.jpg')
-cmd:option('-image_size', 512)
+cmd:option('-content_image', 'images/content/mri.png')
+cmd:option('-sto tyle_image', 'images/styles/starry_night.jpg')
+cmd:option('-image_size', 256)
 
 -- Loss options
 cmd:option('-loss_network', 'models/vgg16.t7')
@@ -27,7 +27,7 @@ cmd:option('-style_target_type', 'gram', 'gram|mean')
 
 -- Options for content reconstruction
 cmd:option('-content_weights', '1.0')
-cmd:option('-content_layers', '16')
+cmd:option('-content_layers', '2')
 
 -- Options for style reconstruction
 cmd:option('-style_weights', '5.0')
@@ -41,7 +41,7 @@ cmd:option('-deepdream_weights', '')
 -- Optimization
 cmd:option('-learning_rate', 1.0)
 cmd:option('-optimizer', 'lbfgs', 'lbfgs|adam')
-cmd:option('-num_iterations', 500)
+cmd:option('-num_iterations', 5000)
 
 -- Output options
 cmd:option('-output_image', 'out.png')
@@ -78,15 +78,15 @@ local function main()
     return
   end
   print(loss_net)
-  local style_layers, style_weights =
-    utils.parse_layers(opt.style_layers, opt.style_weights)
+  --local style_layers, style_weights =
+  --  utils.parse_layers(opt.style_layers, opt.style_weights)
   local content_layers, content_weights =
     utils.parse_layers(opt.content_layers, opt.content_weights)
   local deepdream_layers, deepdream_weights =
     utils.parse_layers(opt.deepdream_layers, opt.deepdream_weights)
   local crit_args = {
     cnn = loss_net,
-    style_layers = style_layers,
+    --style_layers = style_layers,
     style_weights = style_weights,
     content_layers = content_layers,
     content_weights = content_weights,
@@ -105,11 +105,11 @@ local function main()
   crit:setContentTarget(content_image:type(dtype))
   
   -- Set the style image
-  local style_image = image.load(opt.style_image, 3)
-  style_image = image.scale(style_image, opt.style_image_size)
-  local H, W = style_image:size(2), style_image:size(3)
-  style_image = preprocess.preprocess(style_image:view(1, 3, H, W))
-  crit:setStyleTarget(style_image:type(dtype))
+  --local style_image = image.load(opt.style_image, 3)
+  --style_image = image.scale(style_image, opt.style_image_size)
+  --local H, W = style_image:size(2), style_image:size(3)
+  --style_image = preprocess.preprocess(style_image:view(1, 3, H, W))
+  --crit:setStyleTarget(style_image:type(dtype))
 
   -- Set up total variation regularization
   local tv = nn.Identity()
