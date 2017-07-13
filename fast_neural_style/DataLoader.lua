@@ -40,6 +40,9 @@ function DataLoader:__init(opt)
     train = train_size[1],
     val = self.h5_file:read(self.image_paths.val):dataspaceSize()[1],
   }
+  if opt.selectChannel then
+    self.selectChannel = opt.selectChannel
+  end
   self.num_channels = train_size[2]
   self.image_height = train_size[3]
   self.image_width = train_size[4]
@@ -76,11 +79,24 @@ function DataLoader:getBatch(split)
                            self.split_sizes[split])
   
   -- Load images out of the HDF5 file
-  local images = self.h5_file:read(path):partial(
+  local images = nil
+  if self.selectChannel then
+    images = torch.Tensor(end_idx-start_idx+1, 3, self.image_height, self.image_width):zero()
+    for i, channel in pairs(self.selectChannel) do
+      images[{{}, i}] = self.h5_file:read(path):partial(
+                    {start_idx, end_idx},
+                    channel,
+                    {1, self.image_height},
+                    {1, self.image_width}):float():div(255):squeeze()
+    end
+    --images=images:repeatTensor(3,1,1,1):transpose(1,2)
+  else
+    images = self.h5_file:read(path):partial(
                     {start_idx, end_idx},
                     {1, self.num_channels},
                     {1, self.image_height},
                     {1, self.image_width}):float():div(255)
+  end
 
   -- Advance counters, maybe rolling back to the start
   self.split_idxs[split] = end_idx + 1
@@ -88,8 +104,10 @@ function DataLoader:getBatch(split)
     self.split_idxs[split] = 1
   end
 
+  --print("loader", images:type(), images:min(), images:max())
   -- Preprocess images
   images_pre = self.preprocess_fn(images)
+  --images_pre = images
 
   if self.task == 'transform' then
     -- Also read high-res images out of the HDF5 file
@@ -98,10 +116,11 @@ function DataLoader:getBatch(split)
                         {start_idx, end_idx},
                         {1, self.num_channels},
                         {1, self.y_height},
-                        {1, self.y_width})
+                        {1, self.y_width}):float():div(255)
 
     local y_images_pre = self.preprocess_fn(y_images:float())
-    
+    --local y_images_pre = y_images   
+    --print("loader", y_images_pre:type(), y_images_pre:min(), y_images_pre:max()) 
     return images_pre, y_images_pre
   elseif self.task == 'style' then
     -- For style transfer just return the images twice

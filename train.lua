@@ -8,7 +8,9 @@ require 'fast_neural_style.PerceptualCriterion'
 local utils = require 'fast_neural_style.utils'
 local preprocess = require 'fast_neural_style.preprocess'
 local models = require 'fast_neural_style.models'
+local myModel = require 'models'
 
+local modelId = 'percept-notanh-c23'
 local cmd = torch.CmdLine()
 
 
@@ -17,10 +19,13 @@ Train a feedforward style transfer model
 --]]
 
 -- Generic options
+cmd:option('-model', 'paper')
+--cmd:option('-arch', 'c9s1-32,d64,d128,d256,R256,R256,R256,R256,R256,u128,u64,u32,c9s1-3')
 cmd:option('-arch', 'c9s1-32,d64,d128,R128,R128,R128,R128,R128,u64,u32,c9s1-3')
 cmd:option('-use_instance_norm', 1)
-cmd:option('-task', 'style', 'style|upsample')
-cmd:option('-h5_file', 'data/ms-coco-256.h5')
+cmd:option('-task', 'transform', 'style|transform')
+cmd:option('-h5_file', 'data/mri.h5')
+cmd:option('-selectChannel', {2,3})
 cmd:option('-padding_type', 'reflect-start')
 cmd:option('-tanh_constant', 150)
 cmd:option('-preprocessing', 'vgg')
@@ -34,7 +39,7 @@ cmd:option('-tv_strength', 1e-6)
 
 -- Options for feature reconstruction loss
 cmd:option('-content_weights', '1.0')
-cmd:option('-content_layers', '16')
+cmd:option('-content_layers', '2')
 cmd:option('-loss_network', 'models/vgg16.t7')
 
 -- Options for style reconstruction loss
@@ -57,15 +62,14 @@ cmd:option('-lr_decay_factor', 0.5)
 cmd:option('-weight_decay', 0)
 
 -- Checkpointing
-cmd:option('-checkpoint_name', 'checkpoint')
+cmd:option('-checkpoint_dir', 'checkpoint/mri-' .. modelId)
 cmd:option('-checkpoint_every', 1000)
 cmd:option('-num_val_batches', 10)
 
 -- Backend options
-cmd:option('-gpu', 0)
+cmd:option('-gpu', 1)
 cmd:option('-use_cudnn', 1)
 cmd:option('-backend', 'cuda', 'cuda|opencl')
-
 
  function main()
   local opt = cmd:parse(arg)
@@ -73,8 +77,8 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   -- Parse layer strings and weights
   opt.content_layers, opt.content_weights =
     utils.parse_layers(opt.content_layers, opt.content_weights)
-  opt.style_layers, opt.style_weights =
-    utils.parse_layers(opt.style_layers, opt.style_weights)
+  --opt.style_layers, opt.style_weights =
+  --  utils.parse_layers(opt.style_layers, opt.style_weights)
 
   -- Figure out preprocessing
   if not preprocess[opt.preprocessing] then
@@ -93,9 +97,17 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     model = torch.load(opt.resume_from_checkpoint).model:type(dtype)
   else
     print('Initializing model from scratch')
-    model = models.build_model(opt):type(dtype)
+    if opt.model == 'unet' then
+      model = myModel.uNet()
+    else
+      model = models.build_model(opt):type(dtype)
+    end
   end
-  if use_cudnn then cudnn.convert(model, cudnn) end
+  if use_cudnn then cudnn.convert(model, cudnn)
+  elseif opt.gpu > -1 then
+    model = model:cuda()
+  end
+  
   model:training()
   print(model)
   
@@ -117,11 +129,11 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     local loss_net = torch.load(opt.loss_network)
     local crit_args = {
       cnn = loss_net,
-      style_layers = opt.style_layers,
-      style_weights = opt.style_weights,
+      --style_layers = opt.style_layers,
+      --style_weights = opt.style_weights,
       content_layers = opt.content_layers,
       content_weights = opt.content_weights,
-      agg_type = opt.style_target_type,
+      --agg_type = opt.style_target_type,
     }
     percep_crit = nn.PerceptualCriterion(crit_args):type(dtype)
 
@@ -158,7 +170,6 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     
     local x, y = loader:getBatch('train')
     x, y = x:type(dtype), y:type(dtype)
-
     -- Run model forward
     local out = model:forward(x)
     local grad_out = nil
@@ -178,7 +189,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
 
     -- Compute pixel loss and gradient
     local pixel_loss = 0
-      if pixel_crit then
+    if pixel_crit then
       pixel_loss = pixel_crit:forward(out, y)
       pixel_loss = pixel_loss * opt.pixel_loss_weight
       local grad_out_pix = pixel_crit:backward(out, y)
@@ -237,7 +248,6 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     local epoch = t / loader.num_minibatches['train']
 
     local _, loss = optim.adam(f, params, optim_state)
-
     table.insert(train_loss_history, loss[1])
 
     if opt.task == 'style' then
@@ -285,16 +295,17 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       model:training()
 
       -- Save a JSON checkpoint
-      local checkpoint = {
+      local checkpoint_metrics = {
         opt=opt,
         train_loss_history=train_loss_history,
         val_loss_history=val_loss_history,
         val_loss_history_ts=val_loss_history_ts,
         style_loss_history=style_loss_history,
       }
-      local filename = string.format('%s.json', opt.checkpoint_name)
+      local filename = string.format('%s/metrics.t7', opt.checkpoint_dir)
       paths.mkdir(paths.dirname(filename))
-      utils.write_json(filename, checkpoint)
+      --utils.write_json(filename, checkpoint_metrics)
+      torch.save(filename, checkpoint_metrics)
 
       -- Save a torch checkpoint; convert the model to float first
       model:clearState()
@@ -302,8 +313,9 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
         cudnn.convert(model, nn)
       end
       model:float()
+      local checkpoint = {optim_state=optim_state}
       checkpoint.model = model
-      filename = string.format('%s.t7', opt.checkpoint_name)
+      filename = string.format('%s/%d_%d.t7', opt.checkpoint_dir, epoch, t)
       torch.save(filename, checkpoint)
 
       -- Convert the model back

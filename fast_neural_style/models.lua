@@ -134,9 +134,9 @@ function M.build_model(opt)
     prev_dim = next_dim
   end
 
-  model:add(nn.Tanh())
-  model:add(nn.MulConstant(opt.tanh_constant))
-  model:add(nn.TotalVariation(opt.tv_strength))
+  --model:add(nn.Tanh())
+  --model:add(nn.MulConstant(opt.tanh_constant))
+  --model:add(nn.TotalVariation(opt.tv_strength))
 
   return model
 end

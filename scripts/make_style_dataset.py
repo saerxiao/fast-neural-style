@@ -11,11 +11,12 @@ Create an HDF5 file of images for training a feedforward style transfer model.
 """
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--train_dir', default='/home/saxiao/data/train')
-parser.add_argument('--val_dir', default='/home/saxiao/data/validate')
-parser.add_argument('--output_file', default='/home/saxiao/percept-loss/fast-neural-style/data/toy.h5')
+parser.add_argument('--train_dir', default='/data/mri/data/multi/train')
+parser.add_argument('--val_dir', default='/data/mri/data/multi/valid')
+parser.add_argument('--output_file', default='/home/saxiao/percepLoss/fast-neural-style/data/mri.h5')
 parser.add_argument('--height', type=int, default=256)
 parser.add_argument('--width', type=int, default=256)
+parser.add_argument('--resize', type=bool, default=False)
 parser.add_argument('--max_images', type=int, default=-1)
 parser.add_argument('--num_workers', type=int, default=2)
 parser.add_argument('--include_val', type=int, default=1)
@@ -57,17 +58,18 @@ def add_data(h5_file, image_list, prefix, args):
     while True:
       idx, filename = input_queue.get()
       img = imread(filename)
-      try:
-        # First crop the image so its size is a multiple of max_resize
-        H, W = img.shape[0], img.shape[1]
-        H_crop = H - H % args.max_resize
-        W_crop = W - W % args.max_resize
-        img = img[:H_crop, :W_crop]
-        img = imresize(img, (args.height, args.width))
-      except (ValueError, IndexError) as e:
-        print filename
-        print img.shape, img.dtype
-        print e
+      if args.resize:
+        try:
+          # First crop the image so its size is a multiple of max_resize
+          H, W = img.shape[0], img.shape[1]
+          H_crop = H - H % args.max_resize
+          W_crop = W - W % args.max_resize
+          img = img[:H_crop, :W_crop]
+          img = imresize(img, (args.height, args.width))
+        except (ValueError, IndexError) as e:
+          print filename
+          print img.shape, img.dtype
+          print e
       input_queue.task_done()
       output_queue.put((idx, img))
   
@@ -112,8 +114,6 @@ if __name__ == '__main__':
   
   with h5py.File(args.output_file, 'w') as f:
     image_list, image_list_mask = get_image_list(args.train_dir)
-    print image_list
-    print image_list_mask
     add_data(f, image_list, 'train', args)
     add_data(f, image_list_mask, 'train-y', args)
 
