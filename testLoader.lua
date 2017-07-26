@@ -10,7 +10,7 @@ cmd:option('-h5_file', 'data/mri.h5')
 cmd:option('-task', 'transform', 'style|upsample|transform')
 cmd:option('-preprocessing', 'vgg')
 cmd:option('-batch_size', 4)
-cmd:option('-selectChannel', 2)
+cmd:option('-selectChannel', {1,2})
 local opt = cmd:parse(arg)
 
 local outputDir = "/home/saxiao/tmp/perceptLoss"
@@ -20,7 +20,7 @@ for i=1, N do
     local x, y = loader:getBatch('train')
     print("x", x:size())
     print("y", y[1]:max(), y[2]:max(), y[3]:max())
-    local xfile = string.format("%s/%d_c%d_x.png", outputDir, i, opt.selectChannel)
+    local xfile = string.format("%s/%d_c12_x.png", outputDir, i)
     image.save(xfile, preprocess_fn.deprocess(x)[1])
     local yfile = string.format("%s/%d_y.png", outputDir, i)    
     image.save(yfile, preprocess_fn.deprocess(y)[1])

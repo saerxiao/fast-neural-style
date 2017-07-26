@@ -9,7 +9,7 @@ local preprocess = require 'fast_neural_style.preprocess'
 local models = require 'fast_neural_style.models'
 local myModel = require 'models'
 
-local modelId = "percept-morefilters-notanh"
+local modelId = "percept-notanh-c23"
 local cmd = torch.CmdLine()
 cmd:option('-checkpoint', 'checkpoint/mri-' .. modelId .. '/5_40000.t7', 'checkpoint')
 cmd:option('-task', 'transform', 'style|transform')

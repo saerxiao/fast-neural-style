@@ -14,7 +14,8 @@ local function plotTrainVal()
 end
 
 local function plotAllVal()
-  local models = {"percept", "percept-notanh-c1", "percept-notanh-c2", "percept-notanh-c3", "percept-notanh-c12", "percept-notanh-c13", "percept-notanh-c23"}
+  local models = {"percept", "percept-notanh-c1", "percept-notanh-c2", "percept-notanh-c3", "percept-notanh-c23"}
+  --local models = {"percept-notanh-2-4"}
   local metrics = {}
   for _, modelId in pairs(models) do
     local metricFileName = string.format("checkpoint/mri-%s/metrics.t7", modelId)
@@ -27,10 +28,11 @@ local function plotAllVal()
                {models[2], torch.Tensor(metrics[models[2]].val_loss_history_ts), torch.Tensor(metrics[models[2]].val_loss_history), '+'},
                {models[3], torch.Tensor(metrics[models[3]].val_loss_history_ts), torch.Tensor(metrics[models[3]].val_loss_history), '+'},
                {models[4], torch.Tensor(metrics[models[4]].val_loss_history_ts), torch.Tensor(metrics[models[4]].val_loss_history), '+'},
-               {models[5], torch.Tensor(metrics[models[5]].val_loss_history_ts), torch.Tensor(metrics[models[5]].val_loss_history), '+'},
-               {models[6], torch.Tensor(metrics[models[6]].val_loss_history_ts), torch.Tensor(metrics[models[6]].val_loss_history), '+'},
-               {models[7], torch.Tensor(metrics[models[7]].val_loss_history_ts), torch.Tensor(metrics[models[7]].val_loss_history), '+'})
-  gnuplot.raw("set yrange [0:300]")
+               {models[5], torch.Tensor(metrics[models[5]].val_loss_history_ts), torch.Tensor(metrics[models[5]].val_loss_history), '+'}
+               --{models[6], torch.Tensor(metrics[models[6]].val_loss_history_ts), torch.Tensor(metrics[models[6]].val_loss_history), '+'},
+               --{models[7], torch.Tensor(metrics[models[7]].val_loss_history_ts), torch.Tensor(metrics[models[7]].val_loss_history), '+'}
+              )
+  --gnuplot.raw("set yrange [0:300]")
   gnuplot.plotflush()
 end
 

@@ -89,6 +89,12 @@ function DataLoader:getBatch(split)
                     {1, self.image_height},
                     {1, self.image_width}):float():div(255):squeeze()
     end
+    if #self.selectChannel == 1 then
+      images[{{},2}]:copy(images[{{},1}])
+      images[{{},3}]:copy(images[{{},1}])
+    elseif #self.selectChannel == 2 then
+      images[{{},3}]:copy((images[{{},1}]+images[{{},2}])/2)
+    end
     --images=images:repeatTensor(3,1,1,1):transpose(1,2)
   else
     images = self.h5_file:read(path):partial(

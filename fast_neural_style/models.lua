@@ -141,6 +141,48 @@ function M.build_model(opt)
   return model
 end
 
+function M.build_discriminator(opt)
+  local model = nn.Sequential()
+  model:add(nn.JoinTable(1))
+  local k, d, pad = 4, 2, 1
+  local prev_dim = 3
+  local img_size = opt.input_size
+  local conv_dims = {32, 64, 64, 128,128}
+  for _, dim in pairs(conv_dims) do
+    model:add(nn.SpatialConvolutionMM(prev_dim, dim,k,k,d,d,pad,pad))
+    model:add(nn.SpatialBatchNormalization(dim))
+    model:add(nn.ReLU())
+    prev_dim = dim
+    img_size = img_size/d
+  end
+  local flatten_size = img_size * img_size * prev_dim
+  model:add(nn.Reshape(flatten_size))
+  model:add(nn.Linear(flatten_size, 512)):add(nn.ReLU())
+  model:add(nn.Linear(512, 1))
+  model:add(nn.Sigmoid())
+  return model
+end
 
+function M.build_discriminator2(opt)
+  local model = nn.Sequential()
+  model:add(nn.JoinTable(1))
+  local k, d, pad = 4, 2, 1
+  local prev_dim = 3
+  local img_size = opt.input_size
+  local conv_dims = {32, 64, 64, 128,128}
+  for _, dim in pairs(conv_dims) do
+    model:add(nn.SpatialConvolutionMM(prev_dim, dim,k,k,d,d,pad,pad))
+    model:add(nn.SpatialBatchNormalization(dim))
+    model:add(nn.ReLU())
+    prev_dim = dim
+    img_size = img_size/d
+  end
+  local flatten_size = img_size * img_size * prev_dim
+  model:add(nn.Reshape(flatten_size))
+  model:add(nn.Linear(flatten_size, 512)):add(nn.ReLU())
+  model:add(nn.Linear(512, 1))
+  model:add(nn.Sigmoid())
+  return model
+end
 return M
 

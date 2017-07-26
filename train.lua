@@ -10,7 +10,7 @@ local preprocess = require 'fast_neural_style.preprocess'
 local models = require 'fast_neural_style.models'
 local myModel = require 'models'
 
-local modelId = 'percept-notanh-c23'
+local modelId = 'percept-notanh-gan-burn100'
 local cmd = torch.CmdLine()
 
 
@@ -20,12 +20,15 @@ Train a feedforward style transfer model
 
 -- Generic options
 cmd:option('-model', 'paper')
+cmd:option('-use_gan', true)
+cmd:option('-iter_start_gan', 100)
 --cmd:option('-arch', 'c9s1-32,d64,d128,d256,R256,R256,R256,R256,R256,u128,u64,u32,c9s1-3')
 cmd:option('-arch', 'c9s1-32,d64,d128,R128,R128,R128,R128,R128,u64,u32,c9s1-3')
+cmd:option('-input_size', 256)
 cmd:option('-use_instance_norm', 1)
 cmd:option('-task', 'transform', 'style|transform')
 cmd:option('-h5_file', 'data/mri.h5')
-cmd:option('-selectChannel', {2,3})
+cmd:option('-selectChannel', {1,2,3})
 cmd:option('-padding_type', 'reflect-start')
 cmd:option('-tanh_constant', 150)
 cmd:option('-preprocessing', 'vgg')
@@ -63,11 +66,11 @@ cmd:option('-weight_decay', 0)
 
 -- Checkpointing
 cmd:option('-checkpoint_dir', 'checkpoint/mri-' .. modelId)
-cmd:option('-checkpoint_every', 1000)
+cmd:option('-checkpoint_every', 500)
 cmd:option('-num_val_batches', 10)
 
 -- Backend options
-cmd:option('-gpu', 1)
+cmd:option('-gpu', 0)
 cmd:option('-use_cudnn', 1)
 cmd:option('-backend', 'cuda', 'cuda|opencl')
 
@@ -91,10 +94,14 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   local dtype, use_cudnn = utils.setup_gpu(opt.gpu, opt.backend, opt.use_cudnn == 1)
 
   -- Build the model
-  local model = nil
+  local model, discriminator = nil, nil
   if opt.resume_from_checkpoint ~= '' then
     print('Loading checkpoint from ' .. opt.resume_from_checkpoint)
-    model = torch.load(opt.resume_from_checkpoint).model:type(dtype)
+    local checkpoint = torch.load(opt.resume_from_checkpoint)
+    local model = checkpoint.model:type(dtype)
+    if opt.use_gan then
+      discriminator = checkpoint.discriminator:type(dtype)
+    end
   else
     print('Initializing model from scratch')
     if opt.model == 'unet' then
@@ -102,15 +109,26 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     else
       model = models.build_model(opt):type(dtype)
     end
+    if opt.use_gan then
+      discriminator = models.build_discriminator(opt):type(dtype)
+    end
   end
-  if use_cudnn then cudnn.convert(model, cudnn)
-  elseif opt.gpu > -1 then
-    model = model:cuda()
+  local container = nn.Container()
+  container:add(model)
+  if discriminator then
+    container:add(discriminator)
   end
+  if use_cudnn then cudnn.convert(container, cudnn)
+  --elseif opt.gpu > -1 then
+  --  model = model:cuda()
+  --end
   
-  model:training()
+  container:training()
   print(model)
-  
+  if opt.use_gan then
+    print(discriminator)
+  end
+ 
   -- Set up the pixel loss function
   local pixel_crit
   if opt.pixel_loss_weight > 0 then
@@ -148,8 +166,24 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   end
 
   local loader = DataLoader(opt)
-  local params, grad_params = model:getParameters()
+  local loader_gan = DataLoader(opt)
+  
+  local params, grad_params, params_gan, grad_params_gan
+  local function set_params()
+    params, grad_params = model:getParameters()
+    if opt.use_gan then
+      params_gan, grad_params_gan = container:getParameters()
+      local model_param_size = params:size(1)
+      params, grad_params = params_gan[{{1,model_param_size}}], grad_params_gan[{{1,model_param_size}}]
+    end
+  end
+  
+  set_params()
 
+  local criterion_disc
+  if opt.use_gan then
+    criterion_disc = nn.BCECriterion():type(dtype)
+  end
 
   local function shave_y(x, y, out)
     if opt.padding_type == 'none' then
@@ -162,9 +196,8 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       return y
     end
   end
-  
 
-  local function f(x)
+  local function f_content(x)
     assert(x == params)
     grad_params:zero()
     
@@ -227,8 +260,39 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     return loss, grad_params
   end
 
+  local disc_accuracy = -1
+  local function f_gan(x)
+    assert(x == params_gan)
+    grad_params_gan:zero()
 
-  local optim_state = {learningRate=opt.learning_rate}
+    local x, y = loader_gan:getBatch('train')
+    x, y = x:type(dtype), y:type(dtype)
+
+    -- Run generator forward
+    local gen_out = model:forward(x)
+
+    -- Run discriminator forward
+    local x_disc = {y, gen_out}
+    local output_disc = discriminator:forward(x_disc)
+   
+    -- Create discriminator label
+    local y_disc = output_disc.new():resize(output_disc:size(1)):zero()
+    y_disc[{{1, x:size(1)}}]:fill(1)
+
+    -- Compute discriminator loss and gradient
+    local loss = criterion_disc:forward(output_disc, y_disc)
+    local gradLoss = criterion_disc:backward(output_disc, y_disc)
+
+    -- Run model backward
+    local grad_disc = discriminator:backward(x_disc, gradLoss)
+    model:backward(x, -grad_disc[2])
+    
+    disc_accuracy = output_disc:gt(0.5):byte():eq(y_disc:byte()):sum()/y_disc:nElement()
+    return loss, grad_params_gan
+  end
+
+  local optim_state_content = {learningRate=opt.learning_rate_content}
+  local optim_state_gan = {learningRate=opt.learning_rate_gan}
   local train_loss_history = {}
   local val_loss_history = {}
   local val_loss_history_ts = {}
@@ -247,8 +311,15 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   for t = 1, opt.num_iterations do
     local epoch = t / loader.num_minibatches['train']
 
-    local _, loss = optim.adam(f, params, optim_state)
-    table.insert(train_loss_history, loss[1])
+    local _, loss_content = optim.adam(f_content, params, optim_state_content)
+    local loss = loss_content[1]
+    local loss_gan = 0
+    if opt.use_gan and t > opt.iter_start_gan then
+      _, loss_gan = optim.adam(f_gan, params_gan, optim_state_gan)
+      loss_gan = loss_gan[1]
+      loss = loss + loss_gan
+    end
+    table.insert(train_loss_history, {lost_content=loss_content[1], loss_gan=loss_gan, loss=loss, disc_accuracy=disc_accuracy})
 
     if opt.task == 'style' then
       for i, k in ipairs(opt.style_layers) do
@@ -261,14 +332,13 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       end
     end
 
-    print(string.format('Epoch %f, Iteration %d / %d, loss = %f',
-          epoch, t, opt.num_iterations, loss[1]), optim_state.learningRate)
+    print(string.format('Epoch %f, Iteration %d / %d, loss_content = %f, loss_gan = %f, loss = %f, disc_accuracy = %f', epoch, t, opt.num_iterations, loss_content[1], loss_gan, loss, disc_accuracy))
 
     if t % opt.checkpoint_every == 0 then
       -- Check loss on the validation set
       loader:reset('val')
-      model:evaluate()
-      local val_loss = 0
+      container:evaluate()
+      local val_loss, val_loss_disc, val_disc_hits = 0, 0, 0
       print 'Running on validation set ... '
       local val_batches = opt.num_val_batches
       for j = 1, val_batches do
@@ -287,14 +357,27 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
           percep_loss = opt.percep_loss_weight * percep_loss
         end
         val_loss = val_loss + pixel_loss + percep_loss
+        
+        -- discriminator loss
+        if opt.use_gan then
+          local out_disc = discriminator:forward({y, out})
+          local y_disc = out_disc.new():resize(out_disc:size(1)):zero()
+          y_disc[{{1, x:size(1)}}]:fill(1) 
+          local disc_loss = criterion_disc:forward(out_disc, y_disc)
+          val_loss_disc = val_loss_disc + disc_loss
+          local hits = out_disc:gt(0.5):byte():eq(y_disc:byte()):sum()
+          val_disc_hits = val_disc_hits + hits/y_disc:nElement()
+        end
       end
       val_loss = val_loss / val_batches
-      print(string.format('val loss = %f', val_loss))
-      table.insert(val_loss_history, val_loss)
+      val_loss_disc = val_loss_disc / val_batches
+      val_disc_hits = val_disc_hits / val_batches
+      print(string.format('content val loss = %f, discriminator val loss = %f, discriminator hits = %f', val_loss, val_loss_disc,val_disc_hits))
+      table.insert(val_loss_history, {val_loss=val_loss+val_loss_disc, val_loss_content=val_loss, val_loss_gan=val_loss_disc, val_disc_hits=val_disc_hits})
       table.insert(val_loss_history_ts, t)
-      model:training()
+      container:training()
 
-      -- Save a JSON checkpoint
+      -- Save checkpoint
       local checkpoint_metrics = {
         opt=opt,
         train_loss_history=train_loss_history,
@@ -308,22 +391,25 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       torch.save(filename, checkpoint_metrics)
 
       -- Save a torch checkpoint; convert the model to float first
-      model:clearState()
+      container:clearState()
       if use_cudnn then
-        cudnn.convert(model, nn)
+        cudnn.convert(container, nn)
       end
-      model:float()
+      container:float()
       local checkpoint = {optim_state=optim_state}
       checkpoint.model = model
+      if opt.use_gan then
+        checkpoint.discriminator = discriminator
+      end
       filename = string.format('%s/%d_%d.t7', opt.checkpoint_dir, epoch, t)
       torch.save(filename, checkpoint)
 
       -- Convert the model back
-      model:type(dtype)
+      container:type(dtype)
       if use_cudnn then
-        cudnn.convert(model, cudnn)
+        cudnn.convert(container, cudnn)
       end
-      params, grad_params = model:getParameters()
+      set_params()
     end
 
     if opt.lr_decay_every > 0 and t % opt.lr_decay_every == 0 then
@@ -334,7 +420,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   end
 
 end
-
+end
 
 main()
 

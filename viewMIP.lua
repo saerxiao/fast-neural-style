@@ -15,13 +15,17 @@ local use_cudnn = 1
 local checkpointFile = "checkpoint/mri-" .. modelId .. "/5_40000.t7"
 
 local dir = "/data/mri/data/multi/valid"
+--local selectVolId = 'IXI291'
 local dtype, use_cudnn = utils.setup_gpu(gpu, backend, use_cudnn == 1)
 local checkpoint = torch.load(checkpointFile)
 local model = checkpoint.model:type(dtype)
 
 local batchsize = 4
-local plotSlice = false
+local plotSlice = true
 local outputdir = "/home/saxiao/tmp/mri/mip/" .. modelId
+if selectVolId then
+  outputdir = outputdir .. '-' .. selectVolId
+end
 paths.mkdir(outputdir)
 
 local function getVolumnMap()
@@ -98,10 +102,16 @@ end
 local volumns = getVolumnMap()
 local N = 1
 local id = 0
+local fileName = "/home/saxiao/tmp/mri/trainIdList.txt"
+local file = io.open(fileName, 'a')
 for volId, slices in pairs(volumns) do
-  local prefix = string.format("%s/%s", outputdir, volId)
-  transform(slices, prefix)
-  id = id + 1
-  print(id)
+  file:write(string.format("%s\n", volId))
+  if not selectVolId or volId == selectVolId then 
+    local prefix = string.format("%s/%s", outputdir, volId)
+    transform(slices, prefix)
+    id = id + 1
+    print(id)
+  end
   --if id == N then break end
 end
+file:close()
