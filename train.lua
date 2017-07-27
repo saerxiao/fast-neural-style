@@ -56,7 +56,7 @@ cmd:option('-style_target_type', 'gram', 'gram|mean')
 cmd:option('-upsample_factor', 4)
 
 -- Optimization
-cmd:option('-num_iterations', 40000)
+cmd:option('-num_iterations', 400000)
 cmd:option('-max_train', -1)
 cmd:option('-batch_size', 4)
 cmd:option('-learning_rate', 1e-3)
@@ -66,7 +66,7 @@ cmd:option('-weight_decay', 0)
 
 -- Checkpointing
 cmd:option('-checkpoint_dir', 'checkpoint/mri-' .. modelId)
-cmd:option('-checkpoint_every', 500)
+cmd:option('-checkpoint_every', 1000)
 cmd:option('-num_val_batches', 10)
 
 -- Backend options
@@ -118,7 +118,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   if discriminator then
     container:add(discriminator)
   end
-  if use_cudnn then cudnn.convert(container, cudnn)
+  if use_cudnn then cudnn.convert(container, cudnn) end
   --elseif opt.gpu > -1 then
   --  model = model:cuda()
   --end
@@ -319,7 +319,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       loss_gan = loss_gan[1]
       loss = loss + loss_gan
     end
-    table.insert(train_loss_history, {lost_content=loss_content[1], loss_gan=loss_gan, loss=loss, disc_accuracy=disc_accuracy})
+    table.insert(train_loss_history, {loss_content=loss_content[1], loss_gan=loss_gan, loss=loss, disc_accuracy=disc_accuracy})
 
     if opt.task == 'style' then
       for i, k in ipairs(opt.style_layers) do
@@ -373,7 +373,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       val_loss_disc = val_loss_disc / val_batches
       val_disc_hits = val_disc_hits / val_batches
       print(string.format('content val loss = %f, discriminator val loss = %f, discriminator hits = %f', val_loss, val_loss_disc,val_disc_hits))
-      table.insert(val_loss_history, {val_loss=val_loss+val_loss_disc, val_loss_content=val_loss, val_loss_gan=val_loss_disc, val_disc_hits=val_disc_hits})
+      table.insert(val_loss_history, {loss=val_loss+val_loss_disc, loss_content=val_loss, loss_gan=val_loss_disc, val_disc_accuracy=val_disc_hits})
       table.insert(val_loss_history_ts, t)
       container:training()
 
@@ -396,7 +396,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
         cudnn.convert(container, nn)
       end
       container:float()
-      local checkpoint = {optim_state=optim_state}
+      local checkpoint = {optim_state_content=optim_state_content, optim_state_gan=optim_state_gan}
       checkpoint.model = model
       if opt.use_gan then
         checkpoint.discriminator = discriminator
@@ -412,14 +412,13 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       set_params()
     end
 
-    if opt.lr_decay_every > 0 and t % opt.lr_decay_every == 0 then
-      local new_lr = opt.lr_decay_factor * optim_state.learningRate
-      optim_state = {learningRate = new_lr}
-    end
+    --if opt.lr_decay_every > 0 and t % opt.lr_decay_every == 0 then
+    --  local new_lr = opt.lr_decay_factor * optim_state.learningRate
+    --  optim_state = {learningRate = new_lr}
+    --end
 
   end
 
-end
 end
 
 main()

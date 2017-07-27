@@ -8,11 +8,11 @@ local myModel = require 'models'
 
 local preprocess_fn = preprocess.vgg
 
-local modelId = 'percept-notanh-c23'
+local modelId = 'percept-notanh-gan-burn100'
 local gpu = 1
 local backend = "cuda"
 local use_cudnn = 1
-local checkpointFile = "checkpoint/mri-" .. modelId .. "/5_40000.t7"
+local checkpointFile = "checkpoint/backup/mri-" .. modelId .. "/5_40000.t7"
 
 local dir = "/data/mri/data/multi/valid"
 --local selectVolId = 'IXI291'
@@ -21,7 +21,7 @@ local checkpoint = torch.load(checkpointFile)
 local model = checkpoint.model:type(dtype)
 
 local batchsize = 4
-local plotSlice = true
+local plotSlice = false
 local outputdir = "/home/saxiao/tmp/mri/mip/" .. modelId
 if selectVolId then
   outputdir = outputdir .. '-' .. selectVolId
