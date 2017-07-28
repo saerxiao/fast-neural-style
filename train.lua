@@ -10,7 +10,7 @@ local preprocess = require 'fast_neural_style.preprocess'
 local models = require 'fast_neural_style.models'
 local myModel = require 'models'
 
-local modelId = 'percept-notanh-gan-burn100'
+local modelId = 'percept-notanh'
 local cmd = torch.CmdLine()
 
 
@@ -20,7 +20,7 @@ Train a feedforward style transfer model
 
 -- Generic options
 cmd:option('-model', 'paper')
-cmd:option('-use_gan', true)
+cmd:option('-use_gan', false)
 cmd:option('-iter_start_gan', 100)
 --cmd:option('-arch', 'c9s1-32,d64,d128,d256,R256,R256,R256,R256,R256,u128,u64,u32,c9s1-3')
 cmd:option('-arch', 'c9s1-32,d64,d128,R128,R128,R128,R128,R128,u64,u32,c9s1-3')
@@ -70,7 +70,7 @@ cmd:option('-checkpoint_every', 1000)
 cmd:option('-num_val_batches', 10)
 
 -- Backend options
-cmd:option('-gpu', 0)
+cmd:option('-gpu', 1)
 cmd:option('-use_cudnn', 1)
 cmd:option('-backend', 'cuda', 'cuda|opencl')
 
@@ -315,7 +315,16 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     local loss = loss_content[1]
     local loss_gan = 0
     if opt.use_gan and t > opt.iter_start_gan then
-      _, loss_gan = optim.adam(f_gan, params_gan, optim_state_gan)
+      if opt.alternate_gen_disc then
+        for i=1, opt.k_disc do
+          _, loss_gen = optim.adam(f_disc, params_disc, optim_state_disc)
+        end
+        for i=1, opt.k_gen do
+          _, loss_disc = optim.adam(f_gen, params, optim_state_gen)
+        end
+      else
+        _, loss_gan = optim.adam(f_gan, params_gan, optim_state_gan)
+      end
       loss_gan = loss_gan[1]
       loss = loss + loss_gan
     end
@@ -373,7 +382,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       val_loss_disc = val_loss_disc / val_batches
       val_disc_hits = val_disc_hits / val_batches
       print(string.format('content val loss = %f, discriminator val loss = %f, discriminator hits = %f', val_loss, val_loss_disc,val_disc_hits))
-      table.insert(val_loss_history, {loss=val_loss+val_loss_disc, loss_content=val_loss, loss_gan=val_loss_disc, val_disc_accuracy=val_disc_hits})
+      table.insert(val_loss_history, {loss=val_loss+val_loss_disc, loss_content=val_loss, loss_gan=val_loss_disc, disc_accuracy=val_disc_hits})
       table.insert(val_loss_history_ts, t)
       container:training()
 
@@ -390,13 +399,18 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       --utils.write_json(filename, checkpoint_metrics)
       torch.save(filename, checkpoint_metrics)
 
+      -- Save optim state
+      local checkpoint_optim_state = {optim_state_content=optim_state_content, optim_state_gan=optim_state_gan}
+      filename = string.format("%s/optim_state.t7", opt.checkpoint_dir)
+      torch.save(filename, checkpoint_optim_state)
+
       -- Save a torch checkpoint; convert the model to float first
       container:clearState()
       if use_cudnn then
         cudnn.convert(container, nn)
       end
       container:float()
-      local checkpoint = {optim_state_content=optim_state_content, optim_state_gan=optim_state_gan}
+      local checkpoint = {}
       checkpoint.model = model
       if opt.use_gan then
         checkpoint.discriminator = discriminator

@@ -58,13 +58,13 @@ local function plotGanMetrics(modelId, valkey, trainkey, validOnly)
   else
     gnuplot.plot({'train', torch.range(1,valsTrain:size(1)), valsTrain, '+'}, {'val', torch.Tensor(metricFile.val_loss_history_ts), valsVal,'+'})
   end
-  --gnuplot.raw("set yrange [0,300]")
+  gnuplot.raw("set yrange [0,1]")
   gnuplot.plotflush()
 end
 
 --plotAllVal('val_loss_history', 'loss')
 plotGanMetrics('percept-notanh-gan-burn100', 'loss_content', 'loss_content', true)
-
+plotGanMetrics('percept-notanh-gan-burn100', 'val_disc_accuracy', 'disc_accuracy', true)
 
 
 
