@@ -12,7 +12,7 @@ local modelId = 'percept-notanh-gan-burn100'
 local gpu = 1
 local backend = "cuda"
 local use_cudnn = 1
-local checkpointFile = "checkpoint/backup/mri-" .. modelId .. "/5_40000.t7"
+local checkpointFile = "checkpoint/mri-" .. modelId .. "/25_170000.t7"  -- 5_40000.t7, 11_80000.t7
 
 local dir = "/data/mri/data/multi/valid"
 --local selectVolId = 'IXI291'
@@ -22,7 +22,7 @@ local model = checkpoint.model:type(dtype)
 
 local batchsize = 4
 local plotSlice = false
-local outputdir = "/home/saxiao/tmp/mri/mip/" .. modelId
+local outputdir = "/home/saxiao/tmp/mri/mip/" .. modelId .. "-iter170000"
 if selectVolId then
   outputdir = outputdir .. '-' .. selectVolId
 end

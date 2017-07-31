@@ -10,18 +10,25 @@ local preprocess = require 'fast_neural_style.preprocess'
 local models = require 'fast_neural_style.models'
 local myModel = require 'models'
 
-local modelId = 'percept-notanh'
+local modelId = 'percept-notanh-wgan'
 local cmd = torch.CmdLine()
 
 
 --[[
 Train a feedforward style transfer model
 --]]
+-- Gan options
+cmd:option('-use_gan', true)
+cmd:option('-gan_type', 'wgan', 'gan|wgan')
+cmd:option('-iter_start_gan', 0)
+cmd:option('-alternate_gen_disc', true)
+cmd:option('-k_gen', 1)
+cmd:option('-k_disc', 5)
+-- wgan option
+cmd:option('-clamp', 0.01)
 
 -- Generic options
 cmd:option('-model', 'paper')
-cmd:option('-use_gan', false)
-cmd:option('-iter_start_gan', 100)
 --cmd:option('-arch', 'c9s1-32,d64,d128,d256,R256,R256,R256,R256,R256,u128,u64,u32,c9s1-3')
 cmd:option('-arch', 'c9s1-32,d64,d128,R128,R128,R128,R128,R128,u64,u32,c9s1-3')
 cmd:option('-input_size', 256)
@@ -58,8 +65,11 @@ cmd:option('-upsample_factor', 4)
 -- Optimization
 cmd:option('-num_iterations', 400000)
 cmd:option('-max_train', -1)
-cmd:option('-batch_size', 4)
-cmd:option('-learning_rate', 1e-3)
+cmd:option('-batch_size', 16)
+cmd:option('-learning_rate_content', 1e-3)
+cmd:option('-learning_rate_gan', 1e-3)
+cmd:option('-learning_rate_gen', 1e-4)
+cmd:option('-learning_rate_disc', 1e-4)
 cmd:option('-lr_decay_every', -1)
 cmd:option('-lr_decay_factor', 0.5)
 cmd:option('-weight_decay', 0)
@@ -71,7 +81,7 @@ cmd:option('-num_val_batches', 10)
 
 -- Backend options
 cmd:option('-gpu', 1)
-cmd:option('-use_cudnn', 1)
+cmd:option('-use_cudnn', 0)
 cmd:option('-backend', 'cuda', 'cuda|opencl')
 
  function main()
@@ -93,6 +103,8 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   -- Figure out the backend
   local dtype, use_cudnn = utils.setup_gpu(opt.gpu, opt.backend, opt.use_cudnn == 1)
 
+  local one = torch.ones(1):type(dtype)
+
   -- Build the model
   local model, discriminator = nil, nil
   if opt.resume_from_checkpoint ~= '' then
@@ -110,7 +122,11 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       model = models.build_model(opt):type(dtype)
     end
     if opt.use_gan then
-      discriminator = models.build_discriminator(opt):type(dtype)
+      if opt.gan_type == 'wgan' then
+        discrominator = models.build_discriminator_wgan(opt):type(dtype)
+      else
+        discriminator = models.build_discriminator(opt):type(dtype)
+      end
     end
   end
   local container = nn.Container()
@@ -168,13 +184,14 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   local loader = DataLoader(opt)
   local loader_gan = DataLoader(opt)
   
-  local params, grad_params, params_gan, grad_params_gan
+  local params, grad_params, params_gan, grad_params_gan, params_disc, grad_params_disc
   local function set_params()
     params, grad_params = model:getParameters()
     if opt.use_gan then
       params_gan, grad_params_gan = container:getParameters()
       local model_param_size = params:size(1)
       params, grad_params = params_gan[{{1,model_param_size}}], grad_params_gan[{{1,model_param_size}}]
+      params_disc, grad_params_disc = params_gan[{{model_param_size+1, -1}}], grad_params_gan[{{model_param_size+1, -1}}]
     end
   end
   
@@ -182,7 +199,11 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
 
   local criterion_disc
   if opt.use_gan then
-    criterion_disc = nn.BCECriterion():type(dtype)
+    if opt.gan_type == 'wgan' then
+      criterion_disc = nn.CSubTable()
+    else  
+      criterion_disc = nn.BCECriterion():type(dtype)
+    end
   end
 
   local function shave_y(x, y, out)
@@ -261,9 +282,9 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
   end
 
   local disc_accuracy = -1
-  local function f_gan(x)
-    assert(x == params_gan)
-    grad_params_gan:zero()
+
+  local function do_f_gan(grads, compute_gen_backward)
+    grads:zero()
 
     local x, y = loader_gan:getBatch('train')
     x, y = x:type(dtype), y:type(dtype)
@@ -274,27 +295,64 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     -- Run discriminator forward
     local x_disc = {y, gen_out}
     local output_disc = discriminator:forward(x_disc)
-   
+
     -- Create discriminator label
-    local y_disc = output_disc.new():resize(output_disc:size(1)):zero()
-    y_disc[{{1, x:size(1)}}]:fill(1)
+    local loss, gradLoss
+    if opt.gan_type == 'wgan' then
+      loss = criterion_disc:forward(output_disc)
+      gradLoss = criterion_disc:backward(output_disc, one)
+  
+      local grad_disc = discriminator:backward(x_disc, gradLoss)
+      if compute_gen_backward then
+        model:backward(x, grad_disc[2])
+      end
+    else
+      local y_disc = output_disc.new():resize(output_disc:size(1)):zero()
+      y_disc[{{1, x:size(1)}}]:fill(1)
+      disc_accuracy = output_disc:gt(0.5):byte():eq(y_disc:byte()):sum()/y_disc:nElement()
 
-    -- Compute discriminator loss and gradient
-    local loss = criterion_disc:forward(output_disc, y_disc)
-    local gradLoss = criterion_disc:backward(output_disc, y_disc)
+      loss = criterion_disc:forward(output_disc, y_disc)
+      gradLoss = criterion_disc:backward(output_disc, y_disc)
 
-    -- Run model backward
-    local grad_disc = discriminator:backward(x_disc, gradLoss)
-    model:backward(x, -grad_disc[2])
-    
-    disc_accuracy = output_disc:gt(0.5):byte():eq(y_disc:byte()):sum()/y_disc:nElement()
-    return loss, grad_params_gan
+      local grad_disc = discriminator:backward(x_disc, gradLoss)
+      if compute_gen_backward then
+        model:backward(x, -grad_disc[2])
+      end
+    end
+
+    return loss, grads
+  end
+
+  local function f_gan(x)
+    assert(x == params_gan)
+    local grads = grad_params_gan
+    return do_f_gan(grads, true)
+  end
+
+  local function f_gen(x)
+    assert(x == params)
+    local grads = grad_params
+    return do_f_gan(grads, true)
+  end
+
+  local function f_disc(x)
+    assert(x == params_disc)
+    local grads = grad_params_disc
+    local loss, grads = do_f_gan(grads, false)
+    grads:clamp(-opt.clamp, opt.clamp)
+    return lossm -grads
   end
 
   local optim_state_content = {learningRate=opt.learning_rate_content}
   local optim_state_gan = {learningRate=opt.learning_rate_gan}
-  local train_loss_history = {}
-  local val_loss_history = {}
+  local optim_state_gen = {learningRate=opt.learning_rate_gen}
+  local optim_state_disc = {learningRate=opt.learning_rate_disc}
+  local train_content_loss_history = {}
+  local train_gan_loss_history = {}
+  local train_disc_accuracy_history = {}
+  local val_content_loss_history = {}
+  local val_gan_loss_history = {}
+  local val_disc_accuracy_history = {}
   local val_loss_history_ts = {}
   local style_loss_history = nil
   if opt.task == 'style' then
@@ -312,23 +370,30 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
     local epoch = t / loader.num_minibatches['train']
 
     local _, loss_content = optim.adam(f_content, params, optim_state_content)
-    local loss = loss_content[1]
-    local loss_gan = 0
+    table.insert(train_content_loss_history, loss_content[1])
     if opt.use_gan and t > opt.iter_start_gan then
       if opt.alternate_gen_disc then
         for i=1, opt.k_disc do
-          _, loss_gen = optim.adam(f_disc, params_disc, optim_state_disc)
+          local  _, loss_gan = optim.rmsprop(f_disc, params_disc, optim_state_disc)
+          table.insert(train_gan_loss_history, {val=loss_gan[1], tag='D'})
+          table.insert(train_disc_accuracy_history, {val=disc_accuracy, tag='D'})
+          print(string.format("Epoch %f, content Iter %d / %d, loss_content = %f, loss_gan = %f, disc_accuracy = %f", epoch, t, opt.num_iterations, loss_content[1], loss_gan[1], disc_accuracy))
         end
         for i=1, opt.k_gen do
-          _, loss_disc = optim.adam(f_gen, params, optim_state_gen)
+          local _, loss_gan = optim.rmsprop(f_gen, params, optim_state_gen)
+          table.insert(train_gan_loss_history, {val=loss_gan[1], tag='G'})
+          table.insert(train_disc_accuracy_history, {val=disc_accuracy, tag='G'})
+          print(string.format("Epoch %f, content Iter %d / %d, loss_content = %f, loss_gan = %f, disc_accuracy = %f", epoch, t, opt.num_iterations, loss_content[1], loss_gan[1], disc_accuracy))
         end
       else
-        _, loss_gan = optim.adam(f_gan, params_gan, optim_state_gan)
+        local _, loss_gan = optim.adam(f_gan, params_gan, optim_state_gan)
+        table.insert(train_gan_loss_history, {val=loss_gan[1], tag='GD'})
+        table.insert(train_disc_accuracy_history, {val=disc_accuracy, tag='GD'})
+        print(string.format('Epoch %f, Iteration %d / %d, loss_content = %f, loss_gan = %f, disc_accuracy = %f', epoch, t, opt.num_iterations, loss_content[1], loss_gan[1], disc_accuracy))
       end
-      loss_gan = loss_gan[1]
-      loss = loss + loss_gan
+    else
+      print(string.format('Epoch %f, Iteration %d / %d, loss_content = %f', epoch, t, opt.num_iterations, loss_content[1]))
     end
-    table.insert(train_loss_history, {loss_content=loss_content[1], loss_gan=loss_gan, loss=loss, disc_accuracy=disc_accuracy})
 
     if opt.task == 'style' then
       for i, k in ipairs(opt.style_layers) do
@@ -340,8 +405,6 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
           percep_crit.content_losses[i])
       end
     end
-
-    print(string.format('Epoch %f, Iteration %d / %d, loss_content = %f, loss_gan = %f, loss = %f, disc_accuracy = %f', epoch, t, opt.num_iterations, loss_content[1], loss_gan, loss, disc_accuracy))
 
     if t % opt.checkpoint_every == 0 then
       -- Check loss on the validation set
@@ -382,15 +445,21 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
       val_loss_disc = val_loss_disc / val_batches
       val_disc_hits = val_disc_hits / val_batches
       print(string.format('content val loss = %f, discriminator val loss = %f, discriminator hits = %f', val_loss, val_loss_disc,val_disc_hits))
-      table.insert(val_loss_history, {loss=val_loss+val_loss_disc, loss_content=val_loss, loss_gan=val_loss_disc, disc_accuracy=val_disc_hits})
+      table.insert(val_content_loss_history, val_loss)
+      table.insert(val_gan_loss_history, val_loss_disc)
+      table.insert(val_disc_accuracy_history, val_disc_hits)
       table.insert(val_loss_history_ts, t)
       container:training()
 
       -- Save checkpoint
       local checkpoint_metrics = {
         opt=opt,
-        train_loss_history=train_loss_history,
-        val_loss_history=val_loss_history,
+        train_content_loss_history=train_content_loss_history,
+        train_gan_loss_history=train_gan_loss_history,
+        train_disc_accuracy_history=train_disc_accuracy_history,
+        val_content_loss_history=val_content_loss_history,
+        val_gan_loss_history=val_gan_loss_history,
+        val_disc_accuracy_history=val_disc_accuracy_history,
         val_loss_history_ts=val_loss_history_ts,
         style_loss_history=style_loss_history,
       }
@@ -416,7 +485,7 @@ cmd:option('-backend', 'cuda', 'cuda|opencl')
         checkpoint.discriminator = discriminator
       end
       filename = string.format('%s/%d_%d.t7', opt.checkpoint_dir, epoch, t)
-      torch.save(filename, checkpoint)
+      --torch.save(filename, checkpoint)
 
       -- Convert the model back
       container:type(dtype)

@@ -141,9 +141,8 @@ function M.build_model(opt)
   return model
 end
 
-function M.build_discriminator(opt)
+local function disc1(opt)
   local model = nn.Sequential()
-  model:add(nn.JoinTable(1))
   local k, d, pad = 4, 2, 1
   local prev_dim = 3
   local img_size = opt.input_size
@@ -159,6 +158,13 @@ function M.build_discriminator(opt)
   model:add(nn.Reshape(flatten_size))
   model:add(nn.Linear(flatten_size, 512)):add(nn.ReLU())
   model:add(nn.Linear(512, 1))
+  return model
+end
+
+function M.build_discriminator(opt)
+  local model = nn.Sequential()
+  model:add(nn.JoinTable(1))
+  model:add(disc1(opt))
   model:add(nn.Sigmoid())
   return model
 end
@@ -184,5 +190,13 @@ function M.build_discriminator2(opt)
   model:add(nn.Sigmoid())
   return model
 end
-return M
 
+function M.build_discriminator_wgan(opt)
+  local real_d = disc1(opt)
+  real_d:add(nn.Mean(1))
+  local gen_d = real_d:clone('weight', 'bias', 'gradWeight', 'gradBias')
+  local model = nn.ParallelTable():add(real_d):add(gen_d)
+  return model
+end
+
+return M

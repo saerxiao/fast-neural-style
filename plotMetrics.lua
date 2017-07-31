@@ -35,7 +35,7 @@ local function plotAllVal(key)
   gnuplot.plotflush()
 end
 
-local function plotGanMetrics(modelId, valkey, trainkey, validOnly)
+local function plotSingleMetrics(modelId, valkey, trainkey, validOnly)
   local metricFileName = string.format("checkpoint/mri-%s/metrics.t7", modelId)
   local metricFile = torch.load(metricFileName)
   local metricsVal = metricFile.val_loss_history
@@ -63,8 +63,8 @@ local function plotGanMetrics(modelId, valkey, trainkey, validOnly)
 end
 
 --plotAllVal('val_loss_history', 'loss')
-plotGanMetrics('percept-notanh-gan-burn100', 'loss_content', 'loss_content', true)
-plotGanMetrics('percept-notanh-gan-burn100', 'val_disc_accuracy', 'disc_accuracy', true)
+plotSingleMetrics('percept-notanh', 'loss_content', 'loss_content', true)
+--plotSingleMetrics('percept-notanh-gan-burn100', 'val_disc_accuracy', 'disc_accuracy', true)
 
 
 
